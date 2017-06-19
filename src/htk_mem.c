@@ -400,3 +400,62 @@ void htk_reset_heap(htk_heap_t *x)
 	}
 	x->tot_used = 0;
 }
+
+void htk_dispose(htk_heap_t *x, void *p)
+{
+	htk_bool_t found = HTK_FALSE;
+	htk_block_t *cur, *next;
+
+	switch (x->type)
+	{
+		case MHEAP:
+			/* find block contains p*/
+			head = cur = x->heap;
+			prev = NULL;
+			size = x->elem_size;
+			while (cur != NULL && !found)
+			{
+				num = cur->num_elem;
+				if (p >= cur->data && p <= (void *)((unsigned char *)cur->data + (num+1) * size))
+				  found = HTK_TRUE;
+				if (!found)
+				{
+					prev = cur;
+					cur = cur->next;
+				}
+			}
+			if (cur == NULL)
+			  htk_error(5175, "htk_dispose: item to free in MHEAP %s not found", x->name);
+
+			/* clear used */
+			index = ((size_t)p - (size_t)cur->data) / size;
+			cur->used[index/8] &= ~(1 << (index & 7));
+
+			/* set block */
+			if (index < cur->first_free)
+			  cur->first_free = index;
+			cur->num_free++;
+			x->tot_used--;
+
+			/* delete block if not used */
+			if (cur->num_free == cur->num_elem)
+			{
+				if (cur != head)
+				  prev->next = cur->next;
+				else
+				  head = cur->next;
+				x->heap = head;
+				x->tot_alloc -= cur->num_elem;
+				free(cur->data);
+				free(cur->used);
+				free(cur)
+			}
+			if (trace & T_MHP)
+			  printf("htk_mem: %s[M] %u bytes at %p freed\n", x->name, size, p);
+			break;
+		case MSTACK:
+			break;
+		case CHEAP:
+			break;
+	}
+}
