@@ -56,3 +56,13 @@ int htk_get_config(char *user, htk_bool_t inc_glob, htk_conf_param_t **list, int
 void htk_register(char *ver, char *sccs)
 {
 }
+
+htk_bool_t htk_get_conf_int(htk_conf_param_t **list, int size, char *name, int *ival)
+{
+	return HTK_TRUE;
+}
+
+htk_bool_t htk_get_conf_bool(htk_conf_param_t **list, int size, char *name, htk_bool_t *b)
+{
+	return HTK_TRUE;
+}

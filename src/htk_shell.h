@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <math.h>
 #include <limits.h>
+#include <string.h>
 
 #define MAXGLOBS 256
 #define MAXSTRLEN 256
@@ -45,6 +46,8 @@ typedef struct {
 void htk_error(int errcode, char *msg, ...);
 int htk_get_config(char *user, htk_bool_t inc_glob, htk_conf_param_t **list, int max);
 void htk_register(char *ver, char *sccs);
+htk_bool_t htk_get_conf_int(htk_conf_param_t **list, int size, char *name, int *ival);
+htk_bool_t htk_get_conf_bool(htk_conf_param_t **list, int size, char *name, htk_bool_t *b);
 
 #endif
 

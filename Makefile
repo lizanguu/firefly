@@ -1,5 +1,5 @@
 CFLAGS=-g -O0 -Wall -Wextra -Isrc -rdynamic -DNODEBUG $(OPTFLAGS)
-LIBS=-ldl $(OPTLIBS)
+LDFLAGS=$(OPTLIBS)
 PREFIX?=/usr/local
 
 SOURCES=$(wildcard src/**/*.c src/*.c)
@@ -29,9 +29,9 @@ build:
 	@mkdir -p bin
 
 .PHONY: tests
-tests: CFLAGS += $(TARGET)
+tests: LDLIBS += $(TARGET)
 tests: $(TESTS)
-	sh ./tests/runtests.sh
+	#sh ./tests/runtests.sh
 
 valgrind:
 	VALGRIND="valgrind --log-file=/tmp/valgrind-%p.log" $(MAKE)

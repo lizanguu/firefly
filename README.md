@@ -1,1 +1,1 @@
-一步步写htk
+htk reading

@@ -73,7 +73,7 @@ size_t htk_mround(size_t size)
 
 static htk_block_t *htk_alloc_block(size_t size, size_t num, htk_heap_type type)
 {
-	int i;
+	size_t i;
 	htk_block_t *p;
 	unsigned char *c;
 
@@ -109,7 +109,7 @@ static htk_block_t *htk_alloc_block(size_t size, size_t num, htk_heap_type type)
 }
 
 /* 将元素个数>=n的block置于首位 */
-static void htk_block_reorder(htk_block_t **p, int n)
+static void htk_block_reorder(htk_block_t **p, size_t n)
 {
 	htk_block_t *head, *cur, *prev;
 
@@ -137,7 +137,7 @@ static void htk_block_reorder(htk_block_t **p, int n)
 
 static void *htk_get_elem(htk_block_t *p, size_t elem_size, htk_heap_type type)
 {
-	int i, index;
+	size_t i, index;
 
 	if (p == NULL)
 	  return NULL;
@@ -191,9 +191,9 @@ void htk_init_mem()
 	htk_create_heap(&gcheap, "global cheap", CHEAP, 1, 0.0, 100000, 0);
 	num_param = htk_get_config("HMEM", HTK_TRUE, cparam, MAXGLOBS);
 	if (num_param > 0) {
-		if (htk_get_config(cparam, num_param, "TRACE", &i))
+		if (htk_get_conf_int(cparam, num_param, "TRACE", &i))
 		  trace = i;
-		if (htk_get_config(cparam, num_param, "PROTECTSTAKS", &b))
+		if (htk_get_conf_bool(cparam, num_param, "PROTECTSTAKS", &b))
 		  protect_staks = b;
 	}
 }
@@ -403,13 +403,14 @@ void htk_reset_heap(htk_heap_t *x)
 
 void htk_dispose(htk_heap_t *x, void *p)
 {
+	size_t size, num, index;
 	htk_bool_t found = HTK_FALSE;
-	htk_block_t *cur, *next;
+	htk_block_t *head, *cur, *prev;
 
 	switch (x->type)
 	{
 		case MHEAP:
-			/* find block contains p*/
+			/* find block contains p */
 			head = cur = x->heap;
 			prev = NULL;
 			size = x->elem_size;
@@ -448,7 +449,7 @@ void htk_dispose(htk_heap_t *x, void *p)
 				x->tot_alloc -= cur->num_elem;
 				free(cur->data);
 				free(cur->used);
-				free(cur)
+				free(cur);
 			}
 			if (trace & T_MHP)
 			  printf("htk_mem: %s[M] %u bytes at %p freed\n", x->name, size, p);

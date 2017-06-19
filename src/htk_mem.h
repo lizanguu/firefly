@@ -40,5 +40,6 @@ void htk_create_heap(htk_heap_t *x, char *name, htk_heap_type type, size_t elem_
 
 void htk_reset_heap(htk_heap_t *x);
 void *htk_heap_malloc(htk_heap_t *x, size_t size);
+void htk_delete_heap(htk_heap_t *x);
 
 #endif
