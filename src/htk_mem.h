@@ -20,8 +20,8 @@ typedef struct {
 	float growf;			
 	size_t elem_size;		/* 元素大小			1 */
 	size_t min_elem;		/* 初始最小元素个数    初始字节数 */
-	size_t max_elem;		/* 最大元素个数		   最大字节数 */
-	size_t cur_elem;		/* 当前元素个数        当前字节数 */
+	size_t max_elem;		/* blk最大元素个数	   最大字节数 */
+	size_t cur_elem;		/* 当前blk元素个数     当前字节数 */
 	size_t tot_used;		/* 已使用的元素个数    已使用字节数 */
 	size_t tot_alloc;		/* 已分配的元素个数    已分配字节数 */
 	htk_block_t *heap;		/* block链表 */
@@ -39,5 +39,6 @@ void htk_create_heap(htk_heap_t *x, char *name, htk_heap_type type, size_t elem_
 			float growf, size_t num_elem, size_t max_elem);
 
 void htk_reset_heap(htk_heap_t *x);
+void *htk_heap_malloc(htk_heap_t *x, size_t size);
 
 #endif

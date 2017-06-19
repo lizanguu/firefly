@@ -1,4 +1,4 @@
-CFLAGS=-g -O2 -Wall -Wextra -Isrc -rdynamic -DNODEBUG $(OPTFLAGS)
+CFLAGS=-g -O0 -Wall -Wextra -Isrc -rdynamic -DNODEBUG $(OPTFLAGS)
 LIBS=-ldl $(OPTLIBS)
 PREFIX?=/usr/local
 
