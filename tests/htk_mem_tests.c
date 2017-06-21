@@ -4,7 +4,7 @@
 int main(int argc, char *argv[])
 {
 	int i = 71;
-	printf("htk_mround(%d)=%d\n", i, htk_mround(i));
+	printf("htk_mround(%d)=%zu\n", i, htk_mround(i));
 
 	void *p;
 	htk_heap_t heap;

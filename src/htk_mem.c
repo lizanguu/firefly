@@ -78,7 +78,7 @@ static htk_block_t *htk_alloc_block(size_t size, size_t num, htk_heap_type type)
 	unsigned char *c;
 
 	if (trace & T_TOP)
-	  printf("HMem: htk_alloc_block of %u bytes\n", num * size);
+	  printf("HMem: htk_alloc_block of %lu bytes\n", num * size);
 	if ((p = (htk_block_t *)malloc(sizeof(htk_block_t))) == NULL)
 	  htk_error(5105, "htk_alloc_block: can not allocate block");
 	if ((p->data = (void *)malloc(num * size)) == NULL)
@@ -240,7 +240,7 @@ void htk_create_heap(htk_heap_t *x, char *name, htk_heap_type type, size_t elem_
 				c = 'C';
 				break;
 		}
-		printf("htk_mem: create heap %s[%c] %u %.1f %u %u\n", name,c,elem_size,growf,num_elem,max_elem);
+		printf("htk_mem: create heap %s[%c] %lu %.1f %lu %lu\n", name,c,elem_size,growf,num_elem,max_elem);
 	}
 }
 
@@ -296,7 +296,7 @@ void *htk_heap_malloc(htk_heap_t *x, size_t size)
 			}
 			x->tot_used++;
 			if (trace & T_MHP)
-			  printf("htk_mem: %s[M] %u bytes at %p allocated\n", x->name, size, q);
+			  printf("htk_mem: %s[M] %zu bytes at %p allocated\n", x->name, size, q);
 
 			return q;
 
@@ -310,7 +310,7 @@ void *htk_heap_malloc(htk_heap_t *x, size_t size)
 			ip = (size_t *)q;
 			*ip = size;
 			if (trace & T_CHP)
-			  printf("htk_new: %s[C] %u+%u bytes at %p allocated\n", x->name, chdr, size, q);
+			  printf("htk_new: %s[C] %zu+%zu bytes at %p allocated\n", x->name, chdr, size, q);
 
 			return (void *)((unsigned char *)q + chdr);
 
@@ -338,16 +338,29 @@ void *htk_heap_malloc(htk_heap_t *x, size_t size)
 			}
 			x->tot_used += size;
 			if (trace & T_STK)
-			  printf("htk_mem: %s[S] %u bytes at %p allocated\n", x->name, size, q);
+			  printf("htk_mem: %s[S] %lu bytes at %p allocated\n", x->name, size, q);
 			if (x->protect)
 			{
 				pp = (void **)((long)q + size - sizeof(void *));
-				*pp = q;
+				*pp = q;	/* record alloced mem address */
 			}
 			return q;
 	}
 
 	return NULL;
+}
+
+void *htk_heap_calloc(htk_heap_t *x, size_t size)
+{
+	void *p;
+
+	p = htk_heap_malloc(x, size);
+	if (x->type == MHEAP && size == 0)
+	  size = x->elem_size;
+
+	memset(p, 0, size);
+
+	return p;
 }
 
 void htk_reset_heap(htk_heap_t *x)
@@ -401,11 +414,13 @@ void htk_reset_heap(htk_heap_t *x)
 	x->tot_used = 0;
 }
 
-void htk_dispose(htk_heap_t *x, void *p)
+void htk_heap_free(htk_heap_t *x, void *p)
 {
-	size_t size, num, index;
+	size_t size, num, index, chdr, *ip;
 	htk_bool_t found = HTK_FALSE;
 	htk_block_t *head, *cur, *prev;
+	void **pp;
+	unsigned char *bp;
 
 	switch (x->type)
 	{
@@ -426,7 +441,7 @@ void htk_dispose(htk_heap_t *x, void *p)
 				}
 			}
 			if (cur == NULL)
-			  htk_error(5175, "htk_dispose: item to free in MHEAP %s not found", x->name);
+			  htk_error(5175, "htk_heap_free: item to free in MHEAP %s not found", x->name);
 
 			/* clear used */
 			index = ((size_t)p - (size_t)cur->data) / size;
@@ -452,11 +467,573 @@ void htk_dispose(htk_heap_t *x, void *p)
 				free(cur);
 			}
 			if (trace & T_MHP)
-			  printf("htk_mem: %s[M] %u bytes at %p freed\n", x->name, size, p);
-			break;
+			  printf("htk_mem: %s[M] %zu bytes at %p freed\n", x->name, size, p);
+			return;
 		case MSTACK:
-			break;
+			cur = x->heap;
+			if (x->protect)
+			{	/* check p is newst alloced mem */
+				if (cur->first_free > 0) /* cur is the stack top */
+				  pp = (void *)((size_t)cur->data + cur->first_free - sizeof(void *));
+				else
+				{	/* stack top in previous block */
+				  if (cur->next == NULL)
+					htk_error(5175, "htk_heap_free: empty stack");
+				  pp = (void *)((size_t)cur->next->data + cur->next->first_free - sizeof(void *));
+				}
+				if (*pp != p)
+				  htk_error(-5175, "htk_heap_free: violation of stack discipline in %s [%p != %p]", x->name, *pp, p);
+			}
+
+			while (cur != NULL && !found)
+			{
+				num = cur->num_elem;
+				found = cur->data <= p && (((void *)((unsigned char *)cur->data + num)) > p);
+				if (!found)
+				{	/* not in cur block, so delete it */
+					x->heap = cur->next;
+					x->tot_alloc -= num;
+					x->tot_used -= cur->first_free;
+					free(cur->data);
+					free(cur);
+					cur = x->heap;
+					if (trace & T_STK)
+					  printf("htk_mem: deleting block in %s[S]\n", x->name);
+				}
+			}
+			if (!found)
+			  htk_error(5175, "htk_heap_free: item to free in MSTACK %s not found", x->name);
+
+			/* finally cut back the stack in the cur block */
+			size = ((unsigned char *)cur->data + cur->first_free) - (unsigned char *)p;
+			if (((unsigned char *)cur->data + cur->first_free) < (unsigned char *)p)
+			  htk_error(5175, "htk_heap_free: item to free in MSTACK %s is above stack top", x->name);
+			cur->first_free -= size;
+			cur->num_free += size;
+			x->tot_used -= size;
+
+			if (trace & T_STK)
+			  printf("htk_mem: %s[S] %zu bytes at %p deallocated\n", x->name, size, p);
+			return;
 		case CHEAP:
+			chdr = htk_mround(sizeof(size_t));
+			bp = (unsigned char *)p - chdr;
+			ip = (size_t *)bp;
+			x->tot_alloc -= (*ip + chdr);
+			x->tot_used -= *ip;
+			if (trace & T_CHP)
+			  printf("htk_mem: %s[C] %zu+%zu bytes at %p deallocated\n", x->name, chdr, *ip, bp);
+			free(bp);
 			break;
 	}
+}
+
+void htk_print_heap(htk_heap_t *x)
+{
+	char c = 0;
+	int nblocks = 0;
+	htk_block_t *p;
+
+	switch (x->type)
+	{
+		case MHEAP:
+			c = 'M';
+			break;
+		case MSTACK:
+			c = 'S';
+			break;
+		case CHEAP:
+			c = 'C';
+			break;
+	}
+	for (p = x->heap; p != NULL; p = p->next)
+	  nblocks++;
+
+	printf("nblk=%3d, size=%6zu*%-3zu, used=%9lu, alloc=%9lu : %s[%c]\n", nblocks, x->cur_elem, x->elem_size, x->tot_used, x->tot_alloc*x->elem_size, x->name, c);
+	fflush(stdout);
+}
+
+void htk_print_all_heap()
+{
+	htk_heap_rec_t *p;
+
+	printf("\n---------------------- heap statistics ----------------------\n");
+	for (p = heap_list; p != NULL; p = p->next)
+		htk_print_heap(p->heap);
+	printf("\n-------------------------------------------------------------\n");
+}
+
+/* -------------------- htk_vector/htk_matrix memory management -------------------*/
+
+/* size of vectors for creating heaps */
+size_t htk_svector_elem_size(int size)
+{
+	return sizeof(short) * (size + 1);
+}
+size_t htk_ivector_elem_size(int size)
+{
+	return sizeof(int) * (size + 1);
+}
+size_t htk_vector_elem_size(int size)
+{
+	return sizeof(float) * (size + 1);
+}
+size_t htk_dvector_elem_size(int size)
+{
+	return sizeof(double) * (size + 1);
+}
+size_t htk_sdvector_elem_size(int size)
+{
+	/* an extra 2 * sizeof(void *) bytes prepended to hold a usage count and a hook */
+	return sizeof(float) * (size + 1) + sizeof(void *) * 2;
+}
+
+htk_svector_t htk_create_svector(htk_heap_t *x, int size)
+{
+	htk_svector_t v;
+
+	v = (htk_svector_t)htk_heap_malloc(x, htk_svector_elem_size(size));
+	*v = size;
+
+	return v;
+}
+
+htk_ivector_t htk_create_ivector(htk_heap_t *x, int size)
+{
+	htk_ivector_t v;
+
+	v = (htk_ivector_t)htk_heap_malloc(x, htk_ivector_elem_size(size));
+	*v = size;
+
+	return v;
+}
+
+htk_vector_t htk_create_vector(htk_heap_t *x, int size)
+{
+	htk_vector_t v;
+
+	v = (htk_vector_t)htk_heap_malloc(x, htk_vector_elem_size(size));
+	*v = size;
+
+	return v;
+}
+
+htk_dvector_t htk_create_dvector(htk_heap_t *x, int size)
+{
+	htk_dvector_t v;
+
+	v = (htk_dvector_t)htk_heap_malloc(x, htk_dvector_elem_size(size));
+	*v = size;
+
+	return v;
+}
+
+htk_sdvector_t htk_create_sdvector(htk_heap_t *x, int size)
+{
+	void **p;
+	int *i;
+	htk_sdvector_t v;
+
+	p = (void **)htk_heap_malloc(x, htk_sdvector_elem_size(size));
+	v = (htk_sdvector_t)(p + 2);
+	i = (int *)v;
+	*i = size;
+	htk_set_hook(v, NULL);
+	htk_set_use(v, 0);
+
+	return v;
+}
+
+int htk_svector_size(htk_svector_t v)
+{
+	return (int)*v;
+}
+
+int htk_ivector_size(htk_ivector_t v)
+{
+	return *v;
+}
+
+int htk_vector_size(htk_vector_t v)
+{
+	return *((int *)v);
+}
+
+int htk_dvector_size(htk_dvector_t v)
+{
+	return *((int *)v);
+}
+
+void htk_free_svector(htk_heap_t *x, htk_svector_t v)
+{
+	htk_heap_free(x, v);
+}
+
+void htk_free_ivector(htk_heap_t *x, htk_ivector_t v)
+{
+	htk_heap_free(x, v);
+}
+
+void htk_free_vector(htk_heap_t *x, htk_vector_t v)
+{
+	htk_heap_free(x, v);
+}
+
+void htk_free_dvector(htk_heap_t *x, htk_dvector_t v)
+{
+	htk_heap_free(x, v);
+}
+
+void htk_free_sdvector(htk_heap_t *x, htk_sdvector_t v)
+{
+	htk_dec_use(v);
+	if (htk_get_use(v) <= 0)
+	  htk_heap_free(x, (void **)(v) - 2);
+}
+
+size_t htk_matrix_elem_size(int nrows, int ncols)
+{
+	return htk_vector_elem_size(ncols) * nrows + (nrows + 1) * sizeof(htk_vector_t);
+}
+
+size_t htk_dmatrix_elem_size(int nrows, int ncols)
+{
+	return htk_mround(htk_dvector_elem_size(ncols) * nrows + (nrows + 1) * sizeof(htk_dvector_t));
+}
+
+size_t htk_sdmatrix_elem_size(int nrows, int ncols)
+{
+	return htk_vector_elem_size(ncols) * nrows + (nrows+3) * sizeof(htk_vector_t);
+}
+
+/* ? */
+size_t htk_tmatrix_elem_size(int size)
+{
+	return size * (htk_vector_elem_size(0)*2 + (size+1)*sizeof(float))/2 + (size+1)*sizeof(htk_vector_t);
+}
+
+/* ? */
+size_t htk_stmatrix_elem_size(int size)
+{
+	return size*(htk_vector_elem_size(0)*2+(size+1)*sizeof(float))/2 + (size+1)*sizeof(htk_vector_t) + 2*sizeof(void *);
+}
+
+/* matrix结构
+ * m       =>  nrows pr_1 pr_2 pr_3 ... pr_nrows
+ * pr_1    =>  ncols m_11     m_12     m_13     ... m_1ncols
+ * pr_2    =>  ncols m_21     m_22     m_23     ... m_2ncols
+ *                      ...
+ * pr_nrows => ncols m_nrows1 m_nrows2 m_nrows3 ... m_nrows_ncols
+ */
+htk_matrix_t htk_create_matrix(htk_heap_t *x, int nrows, int ncols)
+{
+	size_t vsize;
+	int *i, j;
+	htk_vector_t *m;
+	char *p;
+
+	p = (char *)htk_heap_malloc(x, htk_matrix_elem_size(nrows, ncols));
+	i = (int *)p;
+	*i = nrows;
+	m = (htk_vector_t *)p;
+	p += (nrows+1)*sizeof(htk_vector_t);
+	vsize = htk_vector_elem_size(ncols);
+	for (j = 1; j <= nrows; j++, p += vsize)
+	{
+		i = (int *)p;
+		*i = ncols;
+		m[j] = (htk_vector_t)p;
+	}
+
+	return m;
+}
+
+htk_tmatrix_t htk_create_tmatrix(htk_heap_t *x, int size)
+{
+	char *p;
+	int *i, j;
+	htk_vector_t *m;
+
+	p = (char *)htk_heap_malloc(x, htk_tmatrix_elem_size(size));
+	i = (int *)p;
+	*i = size;
+	m = (htk_vector_t *)p;
+	p += (size + 1) * sizeof(htk_vector_t);
+	for (j = 1; j <= size; j++)
+	{
+		i = (int *)p;
+		*i = j;
+		m[j] = (htk_vector_t)p;
+		p += htk_vector_elem_size(j);
+	}
+
+	return m;
+}
+
+htk_dmatrix_t htk_create_dmatrix(htk_heap_t *x, int nrows, int ncols)
+{
+	size_t vsize;
+	int *i, j;
+	htk_dvector_t *m;
+	char *p;
+
+	p = (char *)htk_heap_malloc(x, htk_dmatrix_elem_size(nrows, ncols));
+	i = (int *)p;
+	*i = nrows;
+	m = (htk_dvector_t *)p;
+	p += htk_mround((nrows+1)*sizeof(htk_dvector_t));
+	vsize = htk_dvector_elem_size(ncols);
+	for (j = 1; j <= nrows; j++, p += vsize)
+	{
+		i = (int *)p;
+		*i = ncols;
+		m[j] = (htk_dvector_t)p;
+	}
+
+	return m;
+}
+
+htk_matrix_t htk_create_sdmatrix(htk_heap_t *x, int nrows, int ncols)
+{
+	size_t vsize;
+	int *i, j;
+	htk_vector_t *m;
+	char *p;
+
+	p = (char *)htk_heap_malloc(x, htk_sdmatrix_elem_size(nrows, ncols));
+	i = (int *)p;
+	*i = nrows;
+	vsize = htk_vector_elem_size(ncols);
+	m = (htk_vector_t *)p;
+	p += (nrows + 1) * sizeof(htk_vector_t);
+	for (j = 1; j <= nrows; j++, p += vsize)
+	{
+		i = (int *)p;
+		*i = ncols;
+		m[j] = (htk_vector_t)p;
+	}
+	htk_set_hook(m, NULL);
+	htk_set_use(m, 0);
+
+	return m;
+}
+
+htk_stmatrix_t htk_create_stmatrix(htk_heap_t *x, int size)
+{
+	int *i, j;
+	htk_vector_t *m;
+	char *p;
+
+	p = (char *)htk_heap_malloc(x, htk_stmatrix_elem_size(size)) + 2 * sizeof(void **);
+	i = (int *)p;
+	m = (htk_vector_t *)p;
+	p += (size+1) * sizeof(htk_vector_t);
+	for (j = 1; j <= size; j++)
+	{
+		i = (int *)p;
+		*i = j;
+		m[j] = (htk_vector_t)p;
+		p += htk_vector_elem_size(j);
+	}
+	htk_set_hook(m, NULL);
+	htk_set_use(m, 0);
+
+	return m;
+}
+
+htk_bool_t htk_is_tmatrix(htk_matrix_t m)
+{
+	int i, n;
+
+	n = htk_matrix_nrows(m);
+	for (i = 1; i <= n; i++)
+	  if (htk_vector_size(m[i]) != i)
+		return HTK_FALSE;
+
+	return HTK_TRUE;
+}
+
+int htk_matrix_nrows(htk_matrix_t m)
+{
+	int *nrows;
+
+	nrows = (int *)m;
+	return *nrows;
+}
+
+int htk_matrix_ncols(htk_matrix_t m)
+{
+	int *ncols;
+
+	ncols = (int *)m[1];
+	return *ncols;
+}
+
+int htk_dmatrix_nrows(htk_dmatrix_t m)
+{
+	int *nrows;
+
+	nrows = (int *)m;
+
+	return *nrows;
+}
+
+int htk_dmatrix_ncols(htk_dmatrix_t m)
+{
+	int *ncols;
+
+	ncols = (int *)m[1];
+	return *ncols;
+}
+
+int htk_tmatrix_size(htk_tmatrix_t m)
+{
+	int *size;
+
+	size = (int *)m;
+
+	return *size;
+}
+
+void htk_free_matrix(htk_heap_t *x, htk_matrix_t m)
+{
+	htk_heap_free(x, m);
+}
+
+void htk_free_dmatrix(htk_heap_t *x, htk_dmatrix_t m)
+{
+	htk_heap_free(x, m);
+}
+void htk_free_sdmatrix(htk_heap_t *x, htk_sdmatrix_t m)
+{
+	htk_dec_use(m);
+	if (htk_get_use(m) <= 0)
+	  htk_heap_free(x, (void **)m - 2);
+}
+
+void htk_free_tmatrix(htk_heap_t *x, htk_tmatrix_t m)
+{
+	htk_heap_free(x, m);
+}
+
+void htk_free_stmatrix(htk_heap_t *x, htk_stmatrix_t m)
+{
+	htk_dec_use(m);
+	if (htk_get_use(m) == 0)
+	  htk_heap_free(x, (void **)m - 2);
+}
+
+void htk_set_use(void *m, int n)
+{
+	void **p;
+
+	p = (void **)m;
+	--p;
+	*((int *)p) = n;
+}
+
+void htk_inc_use(void *m)
+{
+	void **p;
+
+	p = (void **)m;
+	--p;
+	++(*((int *)p));
+}
+
+void htk_dec_use(void *m)
+{
+	void **p;
+	
+	p = (void **)m;
+	--p;
+	--(*((int *)p));
+}
+
+int htk_get_use(void *m)
+{
+	void **p;
+
+	p = (void **)m;
+	--p;
+	return *((int *)p);
+}
+
+void htk_set_hook(void *m, void *p)
+{
+	void **pp;
+
+	pp = (void **)m;
+	pp -= 2;
+	*pp = p;
+}
+
+void *htk_get_hook(void *m)
+{
+	void **p;
+
+	p = (void **)m;
+	p -= 2;
+
+	return *p;
+}
+
+htk_bool_t htk_isseen_v(void *m)
+{
+	int i;
+	void **p;
+
+	p = (void **)m;
+	--p;
+	i = *((int *)p);
+
+	return i < 0;
+}
+
+void htk_touch_v(void *m)
+{
+	void **p;
+	int i;
+
+	p = (void **)m;
+	--p;
+	i = *((int *)p);
+	if (i == 0)
+	  *((int *)p) = INT_MIN;
+	else
+	  *((int *)p) = -i;
+}
+
+void htk_untouch_v(void *m)
+{
+	void **p;
+	int i;
+
+	p = (void **)m;
+	--p;
+	i = *((int *)p);
+	if (i == INT_MIN)
+	  *((int *)p) = 0;
+	else if (i < 0)
+	  *((int *)p) = -i;
+}
+
+char *htk_new_string(htk_heap_t *x, int size)
+{
+	char *s;
+
+	s = (char *)htk_heap_malloc(x, size + 1);
+	*s = '\0'; /* make it empty */
+
+	return s;
+}
+
+char *htk_copy_string(htk_heap_t *x, char *s)
+{
+	char *t;
+
+	t = (char *)htk_heap_malloc(x, strlen(s) + 1);
+	strcpy(t, s);
+
+	return t;
 }
