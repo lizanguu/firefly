@@ -13,7 +13,7 @@
 #define MINLARG 2.45E-308
 
 typedef float htk_log_float_t;
-typedef double htk_log_double_t
+typedef double htk_log_double_t;
 
 typedef enum {	/* 协方差矩阵类型 */
 	DIAGC,		/* 对角协方差矩阵 */
